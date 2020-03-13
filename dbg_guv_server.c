@@ -53,7 +53,8 @@ void* net_rx(void *arg) {
     }
     
     struct sockaddr_in client_addr; //In case we ever want to use it
-    int client_sfd = accept(server_sfd, &client_addr, sizeof(struct sockaddr_in));
+    unsigned client_addr_len = sizeof(client_addr);
+    int client_sfd = accept(info->server_sfd, (struct sockaddr*)&client_addr, &client_addr_len);
     if (client_sfd < 0) {
         perror("Could not accept incoming connection");
         goto done;
@@ -64,7 +65,7 @@ void* net_rx(void *arg) {
     //Now we just read in a loop, constantly filling the queue
     int len;
     char buf[64];
-    while(len = read(client_sfd, buf, 64)) {
+    while((len = read(client_sfd, buf, 64)) != 0) {
         if (len < 0) {
             perror("Error reading from network");
             goto done;
@@ -93,6 +94,8 @@ int main(int argc, char **argv) {
     
     unsigned long rd_fifo_phys;
     unsigned long wr_fifo_phys;
+    
+    int rc;
     
     if (argc < 2 || argc > 4) {
         puts(usage);
@@ -265,12 +268,15 @@ int main(int argc, char **argv) {
         }
     }
     
-    pthread_join(net_rx_thread);
+    pthread_join(net_rx_thread, NULL);
+    if (base_tx != MAP_FAILED && base_tx != base_rx) munmap(base_tx, 4096);
+    if (base_rx != MAP_FAILED) munmap(base_rx, 4096);
+    if (fd != -1) close(fd);
+    if (sfd != -1) close(sfd);
     
     return 0;
-
-err_unmap_tx:
-    if (base_tx != MAP_FAILED && base_tx != base_rx) munmap(base_tx, 4096);
+    
+    
 err_unmap_rx:
     if (base_rx != MAP_FAILED) munmap(base_rx, 4096);
 err_close_fd:

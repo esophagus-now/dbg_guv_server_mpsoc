@@ -15,7 +15,7 @@ void print_interrupt_info(unsigned ISR) {
     if (ISR & RPUE_MASK) {
         fprintf(stderr, "\t(ERROR) Tried to read from RX FIFO when it was empty\n");
     }
-    if (ISR & TDOE_MASK) {
+    if (ISR & TPOE_MASK) {
         fprintf(stderr, "\t(ERROR) Tried to write to TX FIFO when it was full\n");
     }
     if (ISR & TC_MASK) {
@@ -68,7 +68,7 @@ int reset_TX(volatile AXIStream_FIFO *base) {
 }
 
 //Issues a reset to the RX logic. Returns 0 on successful reset, -1 on error
-int reset_TX(volatile AXIStream_FIFO *base) {
+int reset_RX(volatile AXIStream_FIFO *base) {
     base->ISR = RRC_MASK; //Clear Transmit Reset Complete bit
     
     base->RDFR = 0xA5; //Issue reset command

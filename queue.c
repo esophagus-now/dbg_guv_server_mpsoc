@@ -144,7 +144,7 @@ int nb_dequeue_n(queue *q, char *buf, int n) {
     fprintf(stderr, "Dequeued [");
 #endif
     int i;
-    for (i = 0; i < len; i++) {
+    for (i = 0; i < n; i++) {
 #ifdef DEBUG_ON
         fprintf(stderr, "0x%02x ", q->buf[q->rd_pos]);
 #endif

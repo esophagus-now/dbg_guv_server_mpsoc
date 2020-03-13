@@ -40,7 +40,7 @@ unsigned clear_ints(volatile AXIStream_FIFO *base);
 int reset_TX(volatile AXIStream_FIFO *base);
 
 //Issues a reset to the RX logic. Returns 0 on successful reset, -1 on error
-int reset_TX(volatile AXIStream_FIFO *base);
+int reset_RX(volatile AXIStream_FIFO *base);
 
 //Issues a reset to the AXI-Stream FIFO. Returns 0 on successful reset, -1 on error
 int reset_all(volatile AXIStream_FIFO *base);
