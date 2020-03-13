@@ -123,3 +123,43 @@ int nb_dequeue_single(queue *q, char *c) {
     pthread_cond_signal(&q->can_prod);
     return 0;
 }
+
+//Reads n bytes from queue q in a thread-safe way. Returns 0 on successful read,
+//1 if there was nothing to read, -1 on error (no producers). This function 
+//locks (and unlocks) mutexes, so don't call while holding any mutexes
+int nb_dequeue_n(queue *q, char *buf, int n) {
+    pthread_mutex_lock(&q->mutex);
+    if (PTR_QUEUE_OCCUPANCY(q) < n) {
+        if (q->num_producers > 0) {
+            pthread_mutex_unlock(&q->mutex);
+            return 1;
+        } else {
+            pthread_mutex_unlock(&q->mutex);
+            return -1;
+        }
+    }
+    
+    //Dequeue queue into buf
+#ifdef DEBUG_ON
+    fprintf(stderr, "Dequeued [");
+#endif
+    int i;
+    for (i = 0; i < len; i++) {
+#ifdef DEBUG_ON
+        fprintf(stderr, "0x%02x ", q->buf[q->rd_pos]);
+#endif
+        *buf++ = q->buf[q->rd_pos++];
+        if (q->rd_pos >= BUF_SIZE) q->rd_pos = 0;
+    }
+#ifdef DEBUG_ON
+    fprintf(stderr, "]\n");
+#endif
+
+    if (q->rd_pos == q->wr_pos) q->empty = 1;
+    q->full = 0;
+
+    pthread_mutex_unlock(&q->mutex);
+    
+    pthread_cond_signal(&q->can_prod);
+    return 0;
+}

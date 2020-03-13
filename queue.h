@@ -50,4 +50,9 @@ int dequeue_single(queue *q, char *c);
 //locks (and unlocks) mutexes, so don't call while holding any mutexes
 int nb_dequeue_single(queue *q, char *c);
 
+//Reads n bytes from queue q in a thread-safe way. Returns 0 on successful read,
+//1 if there was nothing to read, -1 on error (no producers). This function 
+//locks (and unlocks) mutexes, so don't call while holding any mutexes
+int nb_dequeue_n(queue *q, char *buf, int n);
+
 #endif

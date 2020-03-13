@@ -11,6 +11,73 @@
 #include "axistreamfifo.h"
 #include "queue.h"
 
+typedef struct {
+    //Never modified by the thread
+    int server_sfd;
+    
+    //Only used by the thread; so no need to serialize access
+    int client_sfd;
+    int client_is_connected;
+    
+    queue *q;
+} net_rx_info;
+
+void net_rx_cleanup(void *arg) {
+    net_rx_info *info = (net_rx_info *) arg;
+    queue *q = info->q;
+    
+    if(info->client_is_connected) {
+        close(info->client_sfd);
+        info->client_is_connected = 0;
+    }
+    
+    pthread_mutex_lock(&q->mutex);
+    q->num_producers--;
+    pthread_mutex_unlock(&q->mutex);
+}
+
+//Remember to increment arg->q->num_producers before spinning up this thread
+void* net_rx(void *arg) {
+    net_rx_info *info = (net_rx_info *) arg;
+    queue *q = info->q;
+    
+    info->client_is_connected = 0;
+    
+    pthread_cleanup_push(net_rx_cleanup, arg);
+    
+    //Listen for and accept incoming connections
+    int rc = listen(info->server_sfd, 1);
+    if (rc < 0) {
+        perror("Could not listen on socket");
+        goto done;
+    }
+    
+    struct sockaddr_in client_addr; //In case we ever want to use it
+    int client_sfd = accept(server_sfd, &client_addr, sizeof(struct sockaddr_in));
+    if (client_sfd < 0) {
+        perror("Could not accept incoming connection");
+        goto done;
+    }
+    info->client_sfd = client_sfd;
+    info->client_is_connected = 1;
+    
+    //Now we just read in a loop, constantly filling the queue
+    int len;
+    char buf[64];
+    while(len = read(client_sfd, buf, 64)) {
+        if (len < 0) {
+            perror("Error reading from network");
+            goto done;
+        }
+        
+        queue_write(q, buf, len);
+    }
+    
+    done:
+    pthread_cleanup_pop(1);
+    pthread_exit(NULL);
+}
+
 char *usage = 
 "Usage: dbg_guv_server 0xRX_ADDR [0xTX_ADDR]\n"
 "\n"
@@ -173,6 +240,32 @@ int main(int argc, char **argv) {
     
     //We're now ready to accept incoming connections. Spin up the thread to
     //receive commands, and then a thread to send out logged flits
+    queue net_rx_queue = QUEUE_INITIALIZER;
+    pthread_t net_rx_thread;
+    
+    net_rx_info net_rx_args = {
+        .server_sfd = sfd,
+        .q = &net_rx_queue
+    }; 
+    
+    net_rx_queue.num_producers++;
+    pthread_create(&net_rx_thread, NULL, net_rx, &net_rx_args);
+    
+    while (1) {
+        char in_cmd[8];
+        rc = nb_dequeue_n(&net_rx_queue, in_cmd, 8);
+        if (rc == 0) {
+            printf("Received command: 0x");
+            int i;
+            for (i = 0; i < 8; i++) {
+                //Endianness???
+                printf("%02x", in_cmd[i] & 0xFF);
+            }
+            printf("\n");
+        }
+    }
+    
+    pthread_join(net_rx_thread);
     
     return 0;
 
