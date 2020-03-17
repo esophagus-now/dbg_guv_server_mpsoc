@@ -183,7 +183,7 @@ int main(int argc, char **argv) {
     
     //At this point, all addresses are guaranteed safe. Proceed to open device
     //files.
-    
+#ifdef TRY_HW    
     fd = open("/dev/mpsoc_axiregs", O_RDWR | O_SYNC);
     if (fd < 0) {
 		perror("Could not open /dev/mpsoc_axiregs");
@@ -240,7 +240,7 @@ int main(int argc, char **argv) {
     if (rc != 0) puts("Warning: RX FIFO might not have reset correctly");
     rc = reset_all(tx_fifo);
     if (rc != 0) puts("Warning: TX FIFO might not have reset correctly");
-    
+#endif
     //We're now ready to accept incoming connections. Spin up the thread to
     //receive commands, and then a thread to send out logged flits
     queue net_rx_queue = QUEUE_INITIALIZER;
@@ -265,6 +265,9 @@ int main(int argc, char **argv) {
                 printf("%02x", in_cmd[i] & 0xFF);
             }
             printf("\n");
+        } else if (rc < 0) {
+            puts("Could not continue");
+            break;
         }
     }
     
