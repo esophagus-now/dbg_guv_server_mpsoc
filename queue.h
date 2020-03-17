@@ -45,6 +45,11 @@ int queue_write(queue *q, char *buf, int len);
 //mutexes, not even the one in the struct! 
 int dequeue_single(queue *q, char *c);
 
+//Reads n bytes from queue q in a thread-safe way. Returns 0 on successful read,
+//1 if there was nothing to read, -1 on error (no producers). This function 
+//locks (and unlocks) mutexes, so don't call while holding any mutexes
+int dequeue_n(queue *q, char *buf, int n);
+
 //Reads a char from queue q in a thread-safe way. Returns 0 on successful read,
 //1 if there was nothing to read, -1 on error (no producers). This function 
 //locks (and unlocks) mutexes, so don't call while holding any mutexes

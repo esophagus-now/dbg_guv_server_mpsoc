@@ -11,25 +11,85 @@
 #include "axistreamfifo.h"
 #include "queue.h"
 
-typedef struct {
+typedef struct _net_mgr_info {
     //Never modified by the thread
     int server_sfd;
+    int stop;
     
-    //Only used by the thread; so no need to serialize access
+    //These values shuldn't be touched by the main thread
+    pthread_mutex_t mutex;
+    pthread_cond_t can_write;
     int client_sfd;
     int client_is_connected;
     
-    queue *q;
-} net_rx_info;
-
-void net_rx_cleanup(void *arg) {
-    net_rx_info *info = (net_rx_info *) arg;
-    queue *q = info->q;
+    //The RX thread takes care of spinning up and down the TX thread
+    pthread_t tx_thread;
     
+    queue *ingress;
+    queue *egress;
+} net_mgr_info;
+
+void* net_tx(void *arg) {
+#ifdef DEBUG_ON
+    fprintf(stderr, "Entered network tx thread\n");
+    fflush(stderr);
+#endif
+    net_mgr_info *info = (net_mgr_info *) arg;
+    queue *q = info->egress;
+    
+    //Just to be safe, wait until the signal that we can write
+    pthread_mutex_lock(&info->mutex);
+    while (!info->client_is_connected) pthread_cond_wait(&info->can_write, &info->mutex);
+    pthread_mutex_unlock(&info->mutex);
+    
+#ifdef DEBUG_ON
+    fprintf(stderr, "Beginning tx thread loop\n");
+    fflush(stderr);
+#endif
+    char cmd[4];
+    
+    while(dequeue_n(q, cmd, 4) >= 0) {
+        int rc = write(info->client_sfd, cmd, 4);
+        if (rc <= 0) {
+            break;
+        }
+    }
+    
+    pthread_exit(NULL);
+}
+
+void net_mgr_cleanup(void *arg) {
+#ifdef DEBUG_ON
+    fprintf(stderr, "Entered network manager cleanup\n");
+    fflush(stderr);
+#endif
+    net_mgr_info *info = (net_mgr_info *) arg;
+    queue *q = info->ingress;
+    
+    pthread_mutex_lock(&info->egress->mutex);
+    info->egress->num_producers = -1;
+    pthread_mutex_unlock(&info->egress->mutex);
+    
+    pthread_cond_broadcast(&info->egress->can_cons);
+    pthread_join(info->tx_thread, NULL); //Is this safe?
+    
+#ifdef DEBUG_ON
+    fprintf(stderr, "TX thread joined\n");
+    fflush(stderr);
+#endif
+    //No real need to lock/unlock mutex, but we'll do it for consistency
+    pthread_mutex_lock(&info->mutex);
     if(info->client_is_connected) {
         close(info->client_sfd);
+        info->client_sfd = -1;
         info->client_is_connected = 0;
     }
+    pthread_mutex_unlock(&info->mutex);
+    
+#ifdef DEBUG_ON
+    fprintf(stderr, "Closed socket\n");
+    fflush(stderr);
+#endif
     
     pthread_mutex_lock(&q->mutex);
     q->num_producers--;
@@ -37,13 +97,17 @@ void net_rx_cleanup(void *arg) {
 }
 
 //Remember to increment arg->q->num_producers before spinning up this thread
-void* net_rx(void *arg) {
-    net_rx_info *info = (net_rx_info *) arg;
-    queue *q = info->q;
+void* net_mgr(void *arg) {
+#ifdef DEBUG_ON
+    fprintf(stderr, "Entered network manager\n");
+    fflush(stderr);
+#endif
+    net_mgr_info *info = (net_mgr_info *) arg;
+    queue *q = info->ingress;
     
     info->client_is_connected = 0;
     
-    pthread_cleanup_push(net_rx_cleanup, arg);
+    pthread_cleanup_push(net_mgr_cleanup, arg);
     
     //Listen for and accept incoming connections
     int rc = listen(info->server_sfd, 1);
@@ -62,13 +126,25 @@ void* net_rx(void *arg) {
     info->client_sfd = client_sfd;
     info->client_is_connected = 1;
     
+    //We can spin up the TX thread
+    pthread_create(&info->tx_thread, NULL, net_tx, info);
+    
     //Now we just read in a loop, constantly filling the queue
     int len;
     char buf[64];
-    while((len = read(client_sfd, buf, 64)) != 0) {
-        if (len < 0) {
+    while(1) {
+        pthread_mutex_lock(&info->mutex);
+        if (info->stop) {
+            pthread_mutex_unlock(&info->mutex);
+            break;
+        }
+        pthread_mutex_unlock(&info->mutex);
+        len = read(client_sfd, buf, 64);
+        if (len == 0) {
+            break;
+        } else if (len < 0) {
             perror("Error reading from network");
-            goto done;
+            break;
         }
         
         queue_write(q, buf, len);
@@ -238,22 +314,44 @@ int main(int argc, char **argv) {
     
     rc = reset_all(rx_fifo);
     if (rc != 0) puts("Warning: RX FIFO might not have reset correctly");
+    //I mean, there's nothing we can do if interrupts are already on, but turn
+    //them off anyway
+    rx_fifo->IER = 0;
     rc = reset_all(tx_fifo);
     if (rc != 0) puts("Warning: TX FIFO might not have reset correctly");
+    tx_fifo->IER = 0;
 #endif
     //We're now ready to accept incoming connections. Spin up the thread to
     //receive commands, and then a thread to send out logged flits
     queue net_rx_queue = QUEUE_INITIALIZER;
-    pthread_t net_rx_thread;
+    queue net_tx_queue = QUEUE_INITIALIZER;
+    pthread_t net_mgr_thread;
     
-    net_rx_info net_rx_args = {
+    net_mgr_info net_mgr_args = {
+        .stop = 0,
         .server_sfd = sfd,
-        .q = &net_rx_queue
+        .mutex = PTHREAD_MUTEX_INITIALIZER,
+        .can_write = PTHREAD_COND_INITIALIZER,
+        .ingress = &net_rx_queue,
+        .egress = &net_tx_queue
     }; 
     
     net_rx_queue.num_producers++;
-    pthread_create(&net_rx_thread, NULL, net_rx, &net_rx_args);
+    net_tx_queue.num_producers++;
+    pthread_create(&net_mgr_thread, NULL, net_mgr, &net_mgr_args);
     
+    
+#ifdef DEBUG_ON
+    fprintf(stderr, "Going to write string\n");
+    fflush(stderr);
+#endif
+    char msg[] = "Hello\nspaghetti\nworld!!\n";
+    queue_write(&net_tx_queue, msg, sizeof(msg) - 1);
+    
+#ifdef DEBUG_ON
+    fprintf(stderr, "String written to net_tx_queue\n");
+    fflush(stderr);
+#endif
     while (1) {
         char in_cmd[8];
         rc = nb_dequeue_n(&net_rx_queue, in_cmd, 8);
@@ -266,12 +364,26 @@ int main(int argc, char **argv) {
             }
             printf("\n");
         } else if (rc < 0) {
-            puts("Could not continue");
+            puts("Network manager finished");
             break;
         }
     }
     
-    pthread_join(net_rx_thread, NULL);
+    pthread_mutex_lock(&net_tx_queue.mutex);
+    net_tx_queue.num_producers--;
+    pthread_mutex_unlock(&net_tx_queue.mutex);
+    
+#ifdef DEBUG_ON
+    fprintf(stderr, "Removed tx_queue producer\n");
+    fflush(stderr);
+#endif
+
+    pthread_join(net_mgr_thread, NULL);
+    
+#ifdef DEBUG_ON
+    fprintf(stderr, "RX thread joined\n");
+    fflush(stderr);
+#endif
     if (base_tx != MAP_FAILED && base_tx != base_rx) munmap(base_tx, 4096);
     if (base_rx != MAP_FAILED) munmap(base_rx, 4096);
     if (fd != -1) close(fd);
