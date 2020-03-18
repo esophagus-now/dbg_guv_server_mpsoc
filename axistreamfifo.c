@@ -132,6 +132,8 @@ void unchecked_send_buf(volatile AXIStream_FIFO *base, char *buf, int len) {
         //manually fiddle with the endianness. "A fix for a fix"...
         base->TDFD = u.w;
     }
+    
+    base->TLR = len;
 }
 
 //Sends an array of 32 bit values. Does not check anything; it's up to you to be
@@ -143,6 +145,8 @@ void unchecked_send_words(volatile AXIStream_FIFO *base, unsigned *vals, int wor
         //32-bit transfers, so this is fine
         base->TDFD = vals[i];
     }
+    
+    base->TLR = words;
 }
 
 //Call this to check for errors after sending something. Clears the TX-related
@@ -157,7 +161,7 @@ int tx_err(volatile AXIStream_FIFO *base) {
 //Sends buf, but checks if there is room first, and checks for error interrupts
 //Basically, clears TX-related error interrupts, combines tx_fifo_vacancy, 
 //unchecked_send_buf, and check_tx_err
-int safe_send_buf(volatile AXIStream_FIFO *base, char *buf, int len) {
+int send_buf(volatile AXIStream_FIFO *base, char *buf, int len) {
     //Check if there is enough room
     unsigned vcy = tx_fifo_word_vacancy(base);
     if (vcy < ((len+3)/4)) return -E_TX_FIFO_NO_ROOM;
@@ -180,7 +184,7 @@ int safe_send_buf(volatile AXIStream_FIFO *base, char *buf, int len) {
 //checks for error interrupts. Basically combines tx_fifo_word_vacancy, 
 //unchecked_send_words, and tx_err. Returns negative error code, or 0 if 
 //everything was fine.
-int safe_send_words(volatile AXIStream_FIFO *base, unsigned *vals, int words) {
+int send_words(volatile AXIStream_FIFO *base, unsigned *vals, int words) {
     //Check if there is enough room
     unsigned vcy = tx_fifo_word_vacancy(base);
     if (vcy < words) return -E_TX_FIFO_NO_ROOM;
@@ -197,4 +201,93 @@ int safe_send_words(volatile AXIStream_FIFO *base, unsigned *vals, int words) {
     }
     
     return ASFIFO_SUCCESS;
+}
+
+//Tells you how many words are in the receive FIFO (kind of; the AXI Stream 
+//FIFO has very weird behaviour for this)
+unsigned rx_fifo_word_occupancy(volatile AXIStream_FIFO *base) {
+    unsigned RDFO = base->RDFO;
+    return RDFO & 0x1FFFF; //Why is this a 17 bit number?
+}
+
+typedef enum {
+    URW_IDLE,
+    URW_TRANSFERRING
+} urw_state_t;
+
+//Reads a number of words out from the AXI-Stream FIFO. Has the same semantics
+//as the read() system call; returns number of words read, and returns 0 to 
+//signify end of packet. Will not read more than you ask for.
+//
+//Unfortunately, there is a snag. It is possible in cut-through mode to read 0
+//new words, but it does not mean the packet is finished. For this reason, a
+//value is returned in partial. If you know that you are using store-and-forward
+//mode, you can pass NULL here to ignore the value.
+//
+//Does not check if the transfer will be legal; this can cause all kinds of 
+//issues! Also, does not support partial words transfers
+int unchecked_read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words, int *partial) {
+    static int words_to_send;
+    static int words_sent;
+    static int partial_internal;
+    static urw_state_t state = URW_IDLE;
+    
+    if (state == URW_IDLE) {
+        unsigned RLR = base->RLR;
+        partial_internal = RLR & 0x80000000;
+        words_to_send = (RLR & 0x1FFFF) / 4;
+        words_sent = 0;
+        state = URW_TRANSFERRING;
+    } else {
+        if (words_sent == words_to_send && !partial_internal) {
+            state = URW_IDLE;
+            return 0;
+        } else if (partial_internal) {
+            //Get updated number of things to send
+            unsigned RLR = base->RLR;
+            partial_internal = RLR & 0x80000000;
+            words_to_send = (RLR & 0x1FFFF) / 4;
+        }
+    }
+    
+    int i;
+    for(i = 0; words_sent < words_to_send && i < words; words_sent++, i++) {
+        *dst++ = base->RDFD;
+    }
+    
+    if (partial != NULL) *partial = (partial_internal ? 1 : 0);
+    
+    return i;
+}
+
+//Call this to check for errors after receiving something. Clears the RX-related
+//error interrupts. Returns 1 if error occurred, 0 if no error
+int rx_err(volatile AXIStream_FIFO *base) {
+    unsigned ISR = base->ISR;
+    
+    //Clear RX-related interrupts
+    base->ISR = RX_ERR_MASK;
+    
+    if (ISR & RX_ERR_MASK) return 1;
+    else return 0;
+}
+
+//Same as unchecked_read_words, but checks for errors. Basically combines 
+//unchecked_read_words with rx_err. Honestly this function is kind of dumb, but
+//whatever.
+//
+//The only difference is that this can return a negative number to signify an
+//error
+int read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words, int *partial) {
+    //Double-check that there is something in the FIFO
+    unsigned occ = rx_fifo_word_occupancy(base);
+    if (occ == 0) return -E_RX_FIFO_EMPTY;
+    
+    //Clear RX-related interrupts so we don't get confused by old messages
+    base->ISR = RX_ERR_MASK;
+        
+    int num_read = unchecked_read_words(base, dst, words, partial);
+    
+    if (base->ISR & RX_ERR_MASK) return -E_ERR_IRQ;
+    else return num_read;
 }

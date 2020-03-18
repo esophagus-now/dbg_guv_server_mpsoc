@@ -32,12 +32,13 @@ typedef struct {
 #define RFPE_MASK  0x00080000 //Receive FIFO Programmable Empty
 
 #define TX_ERR_MASK (TPOE_MASK | TSE_MASK)
+#define RX_ERR_MASK (RPURE_MASK | RPORE_MASK | RPUE_MASK)
 
 
 #define ASFIFO_ERRCODES_IDENTS \
     X(ASFIFO_SUCCESS), /*This has a code of 0*/ \
     X(E_TX_FIFO_NO_ROOM), \
-    X(E_RX_FIFO_NOT_ENOUGH), \
+    X(E_RX_FIFO_EMPTY), \
     X(E_ERR_IRQ)
 
 #define X(x) x
@@ -82,11 +83,40 @@ int tx_err(volatile AXIStream_FIFO *base);
 //Sends buf, but checks if there is room first, and checks for error interrupts
 //Basically, clears TX-related error interrupts, combines tx_fifo_vacancy, 
 //unchecked_send_buf, and check_tx_err
-int safe_send_buf(volatile AXIStream_FIFO *base, char *buf, int len);
+int send_buf(volatile AXIStream_FIFO *base, char *buf, int len);
 
 //Sends an array of 32 bit words. It will first check if there is room, and also
 //checks for error interrupts. Basically combines tx_fifo_word_vacancy, 
 //unchecked_send_words, and tx_err. Returns negative error code, or 0 if 
 //everything was fine.
-int safe_send_words(volatile AXIStream_FIFO *base, unsigned *vals, int words);
+int send_words(volatile AXIStream_FIFO *base, unsigned *vals, int words);
+
+//Tells you how many words are in the receive FIFO (kind of; the AXI Stream 
+//FIFO has very weird behaviour for this)
+unsigned rx_fifo_word_occupancy(volatile AXIStream_FIFO *base);
+
+//Reads a number of words out from the AXI-Stream FIFO. Has the same semantics
+//as the read() system call; returns number of words read, and returns 0 to 
+//signify end of packet. Will not read more than you ask for.
+//
+//Unfortunately, there is a snag. It is possible in cut-through mode to read 0
+//new words, but it does not mean the packet is finished. For this reason, a
+//value is returned in partial. If you know that you are using store-and-forward
+//mode, you can pass NULL here to ignore the value.
+//
+//Does not check if the transfer will be legal; this can cause all kinds of 
+//issues! Also, does not support partial words transfers
+int unchecked_read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words, int *partial);
+
+//Call this to check for errors after receiving something. Clears the RX-related
+//error interrupts. Returns 1 if error occurred, 0 if no error
+int rx_err(volatile AXIStream_FIFO *base);
+
+//Same as unchecked_read_words, but checks for errors. Basically combines 
+//unchecked_read_words with rx_err. Honestly this function is kind of dumb, but
+//whatever.
+//
+//The only difference is that this can return a negative number to signify an
+//error
+int read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words, int *partial);
 #endif
