@@ -3,7 +3,7 @@
 
 //My naming styles are over the map
 #define X(x) #x
-char *ASFIFO_ERRCODE_STRINGS[] = {
+static char *ASFIFO_ERRCODE_STRINGS[] = {
     ASFIFO_ERRCODES_IDENTS
 };
 #undef X
@@ -111,6 +111,8 @@ unsigned tx_fifo_word_vacancy(volatile AXIStream_FIFO *base) {
 //If you're sending a bunch of 32 bit unsigneds, then unchecked_send_words has
 //much better performance
 void unchecked_send_buf(volatile AXIStream_FIFO *base, char *buf, int len) {
+    if (len <= 0) return; //Makes no sense
+    
     int words = ((len+3)/4); //words = ceil(len/4)
     //Endianness makes our lives difficult...
     union {
@@ -132,6 +134,13 @@ void unchecked_send_buf(volatile AXIStream_FIFO *base, char *buf, int len) {
         //manually fiddle with the endianness. "A fix for a fix"...
         base->TDFD = u.w;
     }
+    
+    //Deal with the annoying last partial word
+    int num_remaining = (len%4 == 0) ? 4 : (len%4);
+    for (i = 0; i < num_remaining; i++) {
+        u.byte[3-i] = *buf++;
+    }
+    base->TDFD = u.w;
     
     base->TLR = len;
 }
@@ -234,17 +243,29 @@ int unchecked_read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words
     
     if (state == URW_IDLE) {
         unsigned RLR = base->RLR;
+#ifdef DEBUG_ON
+        fprintf(stderr, "URW_IDLE: RLR=0x%08x\n", RLR);
+        fflush(stderr);
+#endif
         partial_internal = RLR & 0x80000000;
         words_to_send = (RLR & 0x1FFFF) / 4;
         words_sent = 0;
         state = URW_TRANSFERRING;
     } else {
         if (words_sent == words_to_send && !partial_internal) {
+#ifdef DEBUG_ON
+            fprintf(stderr, "URW_TRANSFERRING: done\n");
+            fflush(stderr);
+#endif
             state = URW_IDLE;
             return 0;
         } else if (partial_internal) {
             //Get updated number of things to send
             unsigned RLR = base->RLR;
+#ifdef DEBUG_ON
+            fprintf(stderr, "URW_TRANSMITTING: RLR=0x%08x\n", RLR);
+            fflush(stderr);
+#endif
             partial_internal = RLR & 0x80000000;
             words_to_send = (RLR & 0x1FFFF) / 4;
         }
@@ -264,6 +285,10 @@ int unchecked_read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words
 //error interrupts. Returns 1 if error occurred, 0 if no error
 int rx_err(volatile AXIStream_FIFO *base) {
     unsigned ISR = base->ISR;
+#ifdef DEBUG_ON
+    fprintf(stderr, "rx_err: ISR=0x%08x\n", ISR);
+    fflush(stderr);
+#endif
     
     //Clear RX-related interrupts
     base->ISR = RX_ERR_MASK;
@@ -281,7 +306,9 @@ int rx_err(volatile AXIStream_FIFO *base) {
 int read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words, int *partial) {
     //Double-check that there is something in the FIFO
     unsigned occ = rx_fifo_word_occupancy(base);
-    if (occ == 0) return -E_RX_FIFO_EMPTY;
+    if (occ == 0) return /*-E_RX_FIFO_EMPTY*/ 0;
+    //Hmmm... I guess that's not an error... but returning 0 is definitely a 
+    //weird thing to do
     
     //Clear RX-related interrupts so we don't get confused by old messages
     base->ISR = RX_ERR_MASK;
@@ -290,4 +317,9 @@ int read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words, int *par
     
     if (base->ISR & RX_ERR_MASK) return -E_ERR_IRQ;
     else return num_read;
+}
+
+//Get string for an error code
+char const* asfifo_strerror(int code) {
+    return ASFIFO_ERRCODE_STRINGS[-code];
 }

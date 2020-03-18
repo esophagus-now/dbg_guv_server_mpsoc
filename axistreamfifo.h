@@ -47,8 +47,6 @@ enum {
 };
 #undef X
 
-extern char *ASFIFO_ERRCODE_STRINGS[];
-
 void print_interrupt_info(unsigned ISR);
 
 //Returns what was previously in ISR
@@ -119,4 +117,7 @@ int rx_err(volatile AXIStream_FIFO *base);
 //The only difference is that this can return a negative number to signify an
 //error
 int read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words, int *partial);
+
+//Get string for an error code
+char const* asfifo_strerror(int code);
 #endif
