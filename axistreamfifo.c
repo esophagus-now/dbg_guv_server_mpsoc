@@ -243,29 +243,17 @@ int unchecked_read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words
     
     if (state == URW_IDLE) {
         unsigned RLR = base->RLR;
-#ifdef DEBUG_ON
-        fprintf(stderr, "URW_IDLE: RLR=0x%08x\n", RLR);
-        fflush(stderr);
-#endif
         partial_internal = RLR & 0x80000000;
         words_to_send = (RLR & 0x1FFFF) / 4;
         words_sent = 0;
         state = URW_TRANSFERRING;
     } else {
         if (words_sent == words_to_send && !partial_internal) {
-#ifdef DEBUG_ON
-            fprintf(stderr, "URW_TRANSFERRING: done\n");
-            fflush(stderr);
-#endif
             state = URW_IDLE;
             return 0;
         } else if (partial_internal) {
             //Get updated number of things to send
             unsigned RLR = base->RLR;
-#ifdef DEBUG_ON
-            fprintf(stderr, "URW_TRANSMITTING: RLR=0x%08x\n", RLR);
-            fflush(stderr);
-#endif
             partial_internal = RLR & 0x80000000;
             words_to_send = (RLR & 0x1FFFF) / 4;
         }
@@ -303,10 +291,16 @@ int rx_err(volatile AXIStream_FIFO *base) {
 //
 //The only difference is that this can return a negative number to signify an
 //error
-int read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words, int *partial) {
+//
+//Also, the AXI Stream FIFO is a bit inconvenient because there is no way to
+//discover if it is in store-and-forward or cut-through, so I need the user to
+//pass that information in as a parameter.
+int read_words(volatile AXIStream_FIFO *base, asfifo_mode_t mode, unsigned *dst, int words, int *partial) {
     //Double-check that there is something in the FIFO
-    unsigned occ = rx_fifo_word_occupancy(base);
-    if (occ == 0) return /*-E_RX_FIFO_EMPTY*/ 0;
+    if (mode == STORE_AND_FORWARD) {
+        unsigned occ = rx_fifo_word_occupancy(base);
+        if (occ == 0) return /*-E_RX_FIFO_EMPTY*/ 0;
+    }
     //Hmmm... I guess that's not an error... but returning 0 is definitely a 
     //weird thing to do
     

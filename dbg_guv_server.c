@@ -8,6 +8,7 @@
 #include <arpa/inet.h>
 #include <pthread.h>
 #include <sched.h>
+#include <string.h>
 #include "axistreamfifo.h"
 #include "queue.h"
 
@@ -187,6 +188,7 @@ void* net_mgr(void *arg) {
 
 typedef struct _fifo_mgr_info {
     volatile AXIStream_FIFO *rx_fifo;
+    asfifo_mode_t rx_mode;
     volatile AXIStream_FIFO *tx_fifo;
     int stop;
     
@@ -262,7 +264,7 @@ void* fifo_mgr(void *arg) {
         //Read from queue (which contains commands) and send them
         //Endianness is gonna bite me here...
         unsigned val;
-        int len = read_words(info->rx_fifo, &val, 1, NULL);
+        int len = read_words(info->rx_fifo, info->rx_mode, &val, 1, NULL);
         if (len == 1) {
             queue_write(q, (char*) &val, sizeof(unsigned));
         } else if (len == 0) {
@@ -278,11 +280,14 @@ void* fifo_mgr(void *arg) {
 }
 
 char *usage = 
-"Usage: dbg_guv_server 0xRX_ADDR [0xTX_ADDR]\n"
+"Usage: dbg_guv_server c|s 0xRX_ADDR [0xTX_ADDR]\n"
 "\n"
-"  Opens a server on port 5555. RX_ADDR is the address of the AXI-Stream FIFO\n"
-"  that is receiving flits. TX_ADDR is the address of the AXI-Stream FIFO that\n"
-"  is sending commands (only supply it if it is different from RX_ADDR\n"
+"  Opens a server on port 5555. The first argument is a single char. \"c\" means\n"
+"  that the RX FIFO is in cut-through mode, and \"s\" means store-and-forward. This\n"
+"  codes must match your Vivado design or you will get errors. RX_ADDR is the\n"
+"  address of the AXI-Stream FIFO that is receiving flits. TX_ADDR is the address\n"
+"  of the AXI-Stream FIFO that is sending commands (only supply it if it is\n"
+"  different from RX_ADDR\n"
 ;
 
 int main(int argc, char **argv) {
@@ -295,12 +300,29 @@ int main(int argc, char **argv) {
     
     int rc;
     
-    if (argc < 2 || argc > 4) {
+    if (argc < 3 || argc > 5) {
         puts(usage);
         return 0;
-    } else if (argc == 2) {
-        //Get RX_ADDR from argv[1]
-        int rc = sscanf(argv[1], "%lx", &rd_fifo_phys);
+    }
+    
+    asfifo_mode_t rx_mode;
+    
+    //Parse the mode string
+    if (strlen(argv[1]) != 1 || (argv[1][0] != 'c' && argv[1][0] != 's')) {
+        fprintf(stderr, "First argument must be \"c\" or \"s\"; you entered [%s]\n", argv[1]);
+        return -1;
+    }
+    
+    if (argv[1][0] == 'c') rx_mode = CUT_THROUGH;
+    else if (argv[1][0] == 's') rx_mode = STORE_AND_FORWARD;
+    else {
+        fprintf(stderr, "Something is quite wrong with your arguments.\n%s", usage);
+        return -1;
+    }
+    
+    if (argc == 3) {
+        //Get RX_ADDR from argv[2]
+        int rc = sscanf(argv[2], "%lx", &rd_fifo_phys);
         if (rc != 1) {
             fprintf(stderr, "Error: could not parse [%s]\n", argv[1]);
             return -1;
@@ -319,8 +341,8 @@ int main(int argc, char **argv) {
         }	
         wr_fifo_phys = rd_fifo_phys;
     } else {
-        //Get RX_ADDR from argv[1]
-        int rc = sscanf(argv[1], "%lx", &rd_fifo_phys);
+        //Get RX_ADDR from argv[2]
+        int rc = sscanf(argv[2], "%lx", &rd_fifo_phys);
         if (rc != 1) {
             fprintf(stderr, "Error: could not parse RX_ADDR = [%s]\n", argv[1]);
             return -1;
@@ -338,8 +360,8 @@ int main(int argc, char **argv) {
             return -1;
         }	
         
-        //Get TX_ADDR from argv[2]
-        rc = sscanf(argv[2], "%lx", &wr_fifo_phys);
+        //Get TX_ADDR from argv[3]
+        rc = sscanf(argv[3], "%lx", &wr_fifo_phys);
         if (rc != 1) {
             fprintf(stderr, "Error: could not parse TX_ADDR = [%s]\n", argv[2]);
             return -1;
@@ -465,6 +487,7 @@ int main(int argc, char **argv) {
     fifo_mgr_info fifo_mgr_args = {
         .stop = 0,
         .rx_fifo = rx_fifo,
+        .rx_mode = rx_mode,
         .tx_fifo = tx_fifo,
         .mutex = PTHREAD_MUTEX_INITIALIZER,
         .ingress = &net_tx_queue,

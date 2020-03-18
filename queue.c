@@ -118,7 +118,7 @@ int queue_write(queue *q, char *buf, int len) {
     int i;
     for (i = 0; i < len; i++) {
 #ifdef DEBUG_ON
-        fprintf(stderr, "%c", *buf);
+        fprintf(stderr, "0x%02x ", *buf & 0xFF);
 #endif
         q->buf[q->wr_pos++] = *buf++;
         if (q->wr_pos >= BUF_SIZE) q->wr_pos = 0;

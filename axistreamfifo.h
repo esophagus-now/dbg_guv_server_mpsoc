@@ -93,6 +93,11 @@ int send_words(volatile AXIStream_FIFO *base, unsigned *vals, int words);
 //FIFO has very weird behaviour for this)
 unsigned rx_fifo_word_occupancy(volatile AXIStream_FIFO *base);
 
+typedef enum _asfifo_mode_t {
+    CUT_THROUGH,
+    STORE_AND_FORWARD
+} asfifo_mode_t;
+
 //Reads a number of words out from the AXI-Stream FIFO. Has the same semantics
 //as the read() system call; returns number of words read, and returns 0 to 
 //signify end of packet. Will not read more than you ask for.
@@ -116,7 +121,11 @@ int rx_err(volatile AXIStream_FIFO *base);
 //
 //The only difference is that this can return a negative number to signify an
 //error
-int read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words, int *partial);
+//
+//Also, the AXI Stream FIFO is a bit inconvenient because there is no way to
+//discover if it is in store-and-forward or cut-through, so I need the user to
+//pass that information in as a parameter.
+int read_words(volatile AXIStream_FIFO *base, asfifo_mode_t mode, unsigned *dst, int words, int *partial);
 
 //Get string for an error code
 char const* asfifo_strerror(int code);
