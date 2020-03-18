@@ -471,7 +471,9 @@ int main(int argc, char **argv) {
     queue net_rx_queue = QUEUE_INITIALIZER;
     queue net_tx_queue = QUEUE_INITIALIZER;
     net_rx_queue.num_producers++;
+    net_rx_queue.num_consumers++;
     net_tx_queue.num_producers++;
+    net_tx_queue.num_consumers++;
     
     pthread_t net_mgr_thread, fifo_mgr_thread;
     
@@ -498,14 +500,28 @@ int main(int argc, char **argv) {
     pthread_create(&fifo_mgr_thread, NULL, fifo_mgr, &fifo_mgr_args);
     
     
-    pthread_join(fifo_mgr_thread, NULL);
-#ifdef DEBUG_ON
-    fprintf(stderr, "FIFO RX thread joined\n");
-    fflush(stderr);
-#endif
     pthread_join(net_mgr_thread, NULL);
 #ifdef DEBUG_ON
     fprintf(stderr, "RX thread joined\n");
+    fflush(stderr);
+#endif
+    
+    //At this point, the signal to quit (i.e. client disconnected) has been 
+    //caught. We now try to gracefully close the RX FIFO manager.
+    
+    pthread_mutex_lock(&fifo_mgr_args.mutex);
+    fifo_mgr_args.stop = 1;
+    pthread_mutex_unlock(&fifo_mgr_args.mutex);
+    
+    pthread_mutex_lock(&net_tx_queue.mutex);
+    net_tx_queue.num_consumers--;
+    pthread_mutex_unlock(&net_tx_queue.mutex);
+    pthread_cond_broadcast(&net_tx_queue.can_prod);
+    pthread_cond_broadcast(&net_tx_queue.can_cons);
+    
+    pthread_join(fifo_mgr_thread, NULL);
+#ifdef DEBUG_ON
+    fprintf(stderr, "FIFO RX thread joined\n");
     fflush(stderr);
 #endif
     if (base_tx != MAP_FAILED && base_tx != base_rx) munmap(base_tx, 4096);

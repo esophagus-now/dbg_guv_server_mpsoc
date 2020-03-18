@@ -15,7 +15,11 @@ int enqueue_single(queue *q, char c) {
     //Lock mutex before we try adding c to the queue
     pthread_mutex_lock(&q->mutex);
     //Wait until there is space
-    while (q->full) pthread_cond_wait(&q->can_prod, &q->mutex);
+    while (q->full && q->num_consumers > 0) pthread_cond_wait(&q->can_prod, &q->mutex);
+    if (q->num_consumers <= 0) {
+        pthread_mutex_unlock(&q->mutex);
+        return -1;
+    }
     
     //Add c to the buffer, making sure to signal to everyone else that they
     //can read
@@ -61,8 +65,8 @@ int dequeue_single(queue *q, char *c) {
 }
 
 //Reads n bytes from queue q in a thread-safe way. Returns 0 on successful read,
-//1 if there was nothing to read, -1 on error (no producers). This function 
-//locks (and unlocks) mutexes, so don't call while holding any mutexes
+//and -1 on error (no producers). This function  locks (and unlocks) mutexes, so 
+//don't call while holding any mutexes
 int dequeue_n(queue *q, char *buf, int n) {
     pthread_mutex_lock(&q->mutex);
     while(PTR_QUEUE_OCCUPANCY(q) < n && q->num_producers > 0) {
@@ -108,8 +112,13 @@ int queue_write(queue *q, char *buf, int len) {
     //Lock mutex before we try adding data to the queue
     pthread_mutex_lock(&q->mutex);
     //Wait until there is enough space for entire buffer
-    while (PTR_QUEUE_VACANCY(q) < len)
+    while (PTR_QUEUE_VACANCY(q) < len && q->num_consumers > 0)
         pthread_cond_wait(&q->can_prod, &q->mutex);
+        
+    if (q->num_consumers <= 0) {
+        pthread_mutex_unlock(&q->mutex);
+        return -1;
+    }
     
     //Copy buf into the queue
 #ifdef DEBUG_ON

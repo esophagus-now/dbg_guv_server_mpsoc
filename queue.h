@@ -14,6 +14,7 @@ typedef struct {
     pthread_cond_t can_prod;
     pthread_cond_t can_cons;
     int num_producers;
+    int num_consumers;
 } queue;
 
 #define PTR_QUEUE_OCCUPANCY(q) ((q)->full ? BUF_SIZE : ((BUF_SIZE + (q)->wr_pos - (q)->rd_pos) % BUF_SIZE))
@@ -27,7 +28,8 @@ typedef struct {
     .mutex = PTHREAD_MUTEX_INITIALIZER,\
     .can_prod = PTHREAD_COND_INITIALIZER,\
     .can_cons = PTHREAD_COND_INITIALIZER,\
-    .num_producers = 0\
+    .num_producers = 0,\
+    .num_consumers = 0\
 }
 
 //Adds a char to queue q in a thread-safe way. Returns 0 on successful write,
@@ -46,8 +48,8 @@ int queue_write(queue *q, char *buf, int len);
 int dequeue_single(queue *q, char *c);
 
 //Reads n bytes from queue q in a thread-safe way. Returns 0 on successful read,
-//1 if there was nothing to read, -1 on error (no producers). This function 
-//locks (and unlocks) mutexes, so don't call while holding any mutexes
+//and -1 on error (no producers). This function  locks (and unlocks) mutexes, so 
+//don't call while holding any mutexes
 int dequeue_n(queue *q, char *buf, int n);
 
 //Reads a char from queue q in a thread-safe way. Returns 0 on successful read,
