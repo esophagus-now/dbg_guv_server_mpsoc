@@ -248,7 +248,8 @@ int unchecked_read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words
         words_sent = 0;
         state = URW_TRANSFERRING;
     } else {
-        if (words_sent == words_to_send && !partial_internal) {
+        //Not sure how, but sometimes words_sent becomes greater than words_to_send 
+        if (words_sent >= words_to_send && !partial_internal) {
             state = URW_IDLE;
             return 0;
         } else if (partial_internal) {

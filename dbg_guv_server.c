@@ -1,3 +1,4 @@
+#define _GNU_SOURCE             /* See feature_test_macros(7) */
 #include <stdio.h>
 #include <sys/types.h>
 #include <sys/socket.h>
@@ -25,7 +26,7 @@
 //
 //fifo_tx: Reads from the egress queue, and writes to the AXI Stream FIFO that
 //         sends dbg_guv commands
-//fifo_mgr: Manages starting and stopping fifo_tx, and also reads from the client
+//fifo_mgr: Manages starting and stopping fifo_tx, and also reads from the FIFO
 //          and places data into ingress queue
 
 //The big idea: the egress queue being sent by fifo_tx is the ingress queue 
@@ -157,6 +158,7 @@ void* net_mgr(void *arg) {
     //the tx_thread_started flag are performed atomically
     pthread_mutex_lock(&info->mutex);
     pthread_create(&info->tx_thread, NULL, net_tx, info); //Should be non-blocking, right?
+    pthread_setname_np(info->tx_thread, "net_mgr_tx");
     info->tx_thread_started = 1;
     pthread_mutex_unlock(&info->mutex);
     
@@ -251,6 +253,7 @@ void* fifo_mgr(void *arg) {
     queue *q = info->ingress;
     
     pthread_create(&info->tx_thread, NULL, fifo_tx, info);
+    pthread_setname_np(info->tx_thread, "fifo_mgr_tx");
     pthread_cleanup_push(fifo_mgr_cleanup, info);
     
     while (1) {
@@ -497,7 +500,9 @@ int main(int argc, char **argv) {
     };
 
     pthread_create(&net_mgr_thread, NULL, net_mgr, &net_mgr_args);
+    pthread_setname_np(net_mgr_thread, "net_mgr");
     pthread_create(&fifo_mgr_thread, NULL, fifo_mgr, &fifo_mgr_args);
+    pthread_setname_np(fifo_mgr_thread, "fifo_mgr");
     
     
     pthread_join(net_mgr_thread, NULL);
