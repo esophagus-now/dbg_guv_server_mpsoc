@@ -219,38 +219,39 @@ unsigned rx_fifo_word_occupancy(volatile AXIStream_FIFO *base) {
     return RDFO & 0x1FFFF; //Why is this a 17 bit number?
 }
 
-typedef enum {
-    URW_IDLE,
-    URW_TRANSFERRING
-} urw_state_t;
-
 //Reads a number of words out from the AXI-Stream FIFO. Has the same semantics
-//as the read() system call; returns number of words read, and returns 0 to 
-//signify end of packet. Will not read more than you ask for.
+//as the read() system call; returns number of words read, and will not read 
+//more than you ask for.
 //
-//Unfortunately, there is a snag. It is possible in cut-through mode to read 0
-//new words, but it does not mean the packet is finished. For this reason, a
-//value is returned in partial. If you know that you are using store-and-forward
-//mode, you can pass NULL here to ignore the value.
+//However, there is one key difference: if this function returns 0, it doesn't
+//mean it's the end of the packet. Instead, to use this function, you must do
+//
+//  rw_state_t   my_fifo_state = READ_WORDS_IDLE;
+//  do {
+//		...
+//      int num_read = unchecked_read_words(fifo_base, buf, num_to_read, &my_fifo_state);
+//      ...
+//  while (my_fifo_state != READ_WORDS_IDLE);
+//
+//NOTE: you must maintain a separate state for each FIFO!
 //
 //Does not check if the transfer will be legal; this can cause all kinds of 
 //issues! Also, does not support partial words transfers
-int unchecked_read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words, int *partial) {
+int unchecked_read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words, rw_state_t *state) {
     static int words_to_send;
     static int words_sent;
     static int partial_internal;
-    static urw_state_t state = URW_IDLE;
     
-    if (state == URW_IDLE) {
+    if (*state == READ_WORDS_IDLE) {
         unsigned RLR = base->RLR;
         partial_internal = RLR & 0x80000000;
         words_to_send = (RLR & 0x1FFFF) / 4;
         words_sent = 0;
-        state = URW_TRANSFERRING;
+        *state = READ_WORDS_TRANSFERRING;
     } else {
         //Not sure how, but sometimes words_sent becomes greater than words_to_send 
         if (words_sent >= words_to_send && !partial_internal) {
-            state = URW_IDLE;
+            *state = READ_WORDS_IDLE;
             return 0;
         } else if (partial_internal) {
             //Get updated number of things to send
@@ -264,8 +265,6 @@ int unchecked_read_words(volatile AXIStream_FIFO *base, unsigned *dst, int words
     for(i = 0; words_sent < words_to_send && i < words; words_sent++, i++) {
         *dst++ = base->RDFD;
     }
-    
-    if (partial != NULL) *partial = (partial_internal ? 1 : 0);
     
     return i;
 }
@@ -290,15 +289,28 @@ int rx_err(volatile AXIStream_FIFO *base) {
 //unchecked_read_words with rx_err. Honestly this function is kind of dumb, but
 //whatever.
 //
-//The only difference is that this can return a negative number to signify an
-//error
+//However, there is one key difference: if this function returns 0, it doesn't
+//mean it's the end of the packet. Instead, to use this function, you must do
+//
+//  rw_state_t   my_fifo_state = READ_WORDS_IDLE;
+//  do {
+//		...
+//      int num_read = unchecked_read_words(fifo_base, buf, num_to_read, &my_fifo_state);
+//      ...
+//  while (my_fifo_state != READ_WORDS_IDLE);
+//
+//NOTE: you must maintain a separate state for each FIFO!
 //
 //Also, the AXI Stream FIFO is a bit inconvenient because there is no way to
 //discover if it is in store-and-forward or cut-through, so I need the user to
 //pass that information in as a parameter.
-int read_words(volatile AXIStream_FIFO *base, asfifo_mode_t mode, unsigned *dst, int words, int *partial) {
+int read_words(volatile AXIStream_FIFO *base, asfifo_mode_t mode, unsigned *dst, int words, rw_state_t *state) {
+	if (state == NULL) {
+		return -E_NULL_ARG;
+	}
+	
     //Double-check that there is something in the FIFO
-    if (mode == STORE_AND_FORWARD) {
+    if (mode == STORE_AND_FORWARD && *state == READ_WORDS_IDLE) {
         unsigned occ = rx_fifo_word_occupancy(base);
         if (occ == 0) return /*-E_RX_FIFO_EMPTY*/ 0;
     }
@@ -308,7 +320,7 @@ int read_words(volatile AXIStream_FIFO *base, asfifo_mode_t mode, unsigned *dst,
     //Clear RX-related interrupts so we don't get confused by old messages
     base->ISR = RX_ERR_MASK;
         
-    int num_read = unchecked_read_words(base, dst, words, partial);
+    int num_read = unchecked_read_words(base, dst, words, state);
     
     if (base->ISR & RX_ERR_MASK) return -E_ERR_IRQ;
     else return num_read;

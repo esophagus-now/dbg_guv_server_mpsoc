@@ -1,4 +1,4 @@
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
 #include <stdio.h>
 #include <ctype.h>
 #endif
@@ -27,7 +27,7 @@ int enqueue_single(queue *q, char c) {
     if (q->wr_pos >= BUF_SIZE) q->wr_pos = 0;
     if (q->wr_pos == q->rd_pos) q->full = 1;
     q->empty = 0;
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
     fprintf(stderr, "Enqueued 0x%02x", c);
     if (isprint(c)) fprintf(stderr, " = '%c'", c);
     fprintf(stderr, "\n");
@@ -53,7 +53,7 @@ int dequeue_single(queue *q, char *c) {
     if (q->rd_pos >= BUF_SIZE) q->rd_pos = 0;
     if (q->rd_pos == q->wr_pos) q->empty = 1;
     q->full = 0;
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
     fprintf(stderr, "Dequeued 0x%02x", *c);
     if (isprint(*c)) fprintf(stderr, " = '%c'", *c);
     fprintf(stderr, "\n");
@@ -78,18 +78,18 @@ int dequeue_n(queue *q, char *buf, int n) {
     }
     
     //Dequeue queue into buf
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
     fprintf(stderr, "Dequeued [");
 #endif
     int i;
     for (i = 0; i < n; i++) {
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
         fprintf(stderr, "0x%02x ", q->buf[q->rd_pos]);
 #endif
         *buf++ = q->buf[q->rd_pos++];
         if (q->rd_pos >= BUF_SIZE) q->rd_pos = 0;
     }
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
     fprintf(stderr, "]\n");
 #endif
 
@@ -121,12 +121,12 @@ int queue_write(queue *q, char *buf, int len) {
     }
     
     //Copy buf into the queue
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
     fprintf(stderr, "Enqueued [");
 #endif
     int i;
     for (i = 0; i < len; i++) {
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
         fprintf(stderr, "0x%02x ", *buf & 0xFF);
 #endif
         q->buf[q->wr_pos++] = *buf++;
@@ -134,7 +134,7 @@ int queue_write(queue *q, char *buf, int len) {
     }
     if (q->wr_pos == q->rd_pos) q->full = 1;
     q->empty = 0;
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
     fprintf(stderr, "]\n");
 #endif
     pthread_mutex_unlock(&q->mutex);
@@ -160,7 +160,7 @@ int nb_dequeue_single(queue *q, char *c) {
     if (q->rd_pos >= BUF_SIZE) q->rd_pos = 0;
     if (q->rd_pos == q->wr_pos) q->empty = 1;
     q->full = 0;
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
     fprintf(stderr, "Dequeued 0x%02x", *c);
     if (isprint(*c)) fprintf(stderr, " = '%c'", *c);
     fprintf(stderr, "\n");
@@ -187,18 +187,18 @@ int nb_dequeue_n(queue *q, char *buf, int n) {
     }
     
     //Dequeue queue into buf
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
     fprintf(stderr, "Dequeued [");
 #endif
     int i;
     for (i = 0; i < n; i++) {
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
         fprintf(stderr, "0x%02x ", q->buf[q->rd_pos]);
 #endif
         *buf++ = q->buf[q->rd_pos++];
         if (q->rd_pos >= BUF_SIZE) q->rd_pos = 0;
     }
-#ifdef DEBUG_ON
+#ifdef QUEUE_DEBUG_ON
     fprintf(stderr, "]\n");
 #endif
 

@@ -54,6 +54,7 @@ typedef struct _net_mgr_info {
 
 void* net_tx(void *arg) {
 #ifdef DEBUG_ON
+    static int total_sent = 0;
     fprintf(stderr, "Entered network tx thread\n");
     fflush(stderr);
 #endif
@@ -73,6 +74,10 @@ void* net_tx(void *arg) {
     
     while(dequeue_n(q, cmd, 4) >= 0) {
         int rc = write(info->client_sfd, cmd, 4);
+#ifdef DEBUG_ON
+        total_sent += 4;
+        fprintf(stderr, "Total sent: %d\n", total_sent);
+#endif
         if (rc <= 0) {
             break;
         }
@@ -246,10 +251,14 @@ void fifo_mgr_cleanup(void *arg) {
 //Remember to increment number of producers before spinning up thread
 void* fifo_mgr(void *arg) {
 #ifdef DEBUG_ON
+    static int total_read = 0;
     fprintf(stderr, "Entered FIFO manager\n");
     fflush(stderr);
 #endif
     fifo_mgr_info *info = (fifo_mgr_info*) arg;
+    //Assume FIFO is in a valid state. 
+    rw_state_t rx_fifo_state = READ_WORDS_IDLE;
+    
     queue *q = info->ingress;
     
     pthread_create(&info->tx_thread, NULL, fifo_tx, info);
@@ -267,8 +276,12 @@ void* fifo_mgr(void *arg) {
         //Read from queue (which contains commands) and send them
         //Endianness is gonna bite me here...
         unsigned val;
-        int len = read_words(info->rx_fifo, info->rx_mode, &val, 1, NULL);
+        int len = read_words(info->rx_fifo, info->rx_mode, &val, 1, &rx_fifo_state);
         if (len == 1) {
+#ifdef DEBUG_ON
+            total_read += 4;
+            fprintf(stderr, "Total read: %d\n", total_read);
+#endif
             queue_write(q, (char*) &val, sizeof(unsigned));
         } else if (len == 0) {
             sched_yield();
